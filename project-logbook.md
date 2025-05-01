@@ -42,3 +42,36 @@ The goal is to stay organized, reflect regularly, and make it easier to share up
 - Question: Are more plots necessary for EDA? The reflectance bands pixel range?
 - Question: Where do I show the locations of the sampling points? Where do I discuss it? Maybe EDA? 
 ---
+
+
+## Week of 14 April – 18 April 2025
+
+### Main Activities and Accomplishments
+- Developed and refined the methodology for the upcoming milestone.
+- Successfully retrieved the correct OSM tiles for the study region.
+- Explored different strategies for incorporating OSM data: overlaying masks, adding as extra channels, or integrating as a separate input branch in the CNN architecture.
+
+### Plans for Next Week
+- Implement the approach of integrating OSM data as additional channels to the Sentinel-2 input.
+
+### Challenges, Questions, or Notes
+- Experienced uncertainty regarding the methodology and changed direction several times.
+- Was sick for 2 days
+---
+
+
+## Week of 21 April – 25 April 2025
+
+### Main Activities and Accomplishments
+- Successfully generated image patches with OSM data included as additional channels.
+
+### Plans for Next Week
+- Finalize the experimental setup and begin training the models.
+
+
+### Challenges, Questions, or Notes
+- Needed to determine the correct format for saving the stacked image patches to ensure compatibility with the model pipeline.
+
+
+---
+
