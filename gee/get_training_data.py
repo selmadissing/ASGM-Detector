@@ -8,7 +8,10 @@ import numpy as np
 import shapely
 
 import gee
-import utils
+import sys
+sys.path.append(os.path.abspath('..'))
+
+from gee import utils
 
 
 class Tile:
@@ -126,6 +129,14 @@ class TrainingData:
         fig = utils.plot_numpy_grid(np.clip(self.data[:, :, :, (3, 2, 1)] / 3000, 0, 1))
         fig.savefig(f"{basepath}.png", bbox_inches="tight", pad_inches=0)
         plt.show()
+
+        # Save tiles to ensure exact reproducibility later
+        tiles_save_path = f"../data/tiles/{self.sampling_file}_{self.start_date}_{self.end_date}_tiles.pkl"
+        os.makedirs(os.path.dirname(tiles_save_path), exist_ok=True)
+        with open(tiles_save_path, "wb") as f:
+            pickle.dump(self.tiles, f)
+
+        return self.tiles, self.data
 
 
 def save_patch_arrays(data, basepath, label_class):
