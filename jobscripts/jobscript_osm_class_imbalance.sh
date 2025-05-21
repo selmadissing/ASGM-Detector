@@ -18,12 +18,14 @@ module load SciPy-bundle/2023.07-gfbf-2023a
 module load TensorFlow/2.15.1-foss-2023a-CUDA-12.1.1
 module load matplotlib/3.7.2-gfbf-2023a
 module load scikit-learn/1.3.1-gfbf-2023a
+pip install --user --upgrade pip setuptools wheel
+pip install --user geopandas
 
 cd $HOME/mining_detector
 
 # === Paths ===
 INPUT_DIR=$HOME/mining_detector/256_with_osm
-OUTPUT_DIR=$HOME/mining_detector/model_256_with_osm
+OUTPUT_DIR=$HOME/mining_detector/model_256_with_osm_class_imbalance
 
 # === Run training ===
 python train_ensemble_class_imbalance.py --input_directory $INPUT_DIR --output_directory $OUTPUT_DIR --resolution 256
