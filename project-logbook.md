@@ -7,6 +7,7 @@ The goal is to stay organized, reflect regularly, and make it easier to share up
 
 ---
 
+
 ## Week of 31 March – 4 April 2025
 
 ### Main Activities and Accomplishments
@@ -23,6 +24,7 @@ The goal is to stay organized, reflect regularly, and make it easier to share up
 ### Challenges, Questions, or Notes
 - This week was mostly focused on remininding myself what I have done so far in terms of the project and understand what the next steps are.
 ---
+
 
 ## Week of 7 April – 11 April 2025
 
@@ -71,7 +73,51 @@ The goal is to stay organized, reflect regularly, and make it easier to share up
 
 ### Challenges, Questions, or Notes
 - Needed to determine the correct format for saving the stacked image patches to ensure compatibility with the model pipeline.
-
-
 ---
+
+
+## Week of 28 April – 2 May 2025
+
+### Main Activities and Accomplishments
+- Set up environment and jobs on Snellius for model training.
+- Finalized experimental setup.
+- Reached out to Earth Genome to inquire about their methodology for sampling negative points.
+
+### Plans for Next Week
+- Train all model variants using the prepared datasets.
+
+### Challenges, Questions, or Notes
+- Need to decide whether to use Earth Genome’s handpicked negative points or generate a new set of random negative samples.
+- Working on finalizing the Snellius job script for large-scale training.
+---
+
+
+## Week of 5 May – 9 May 2025
+
+### Main Activities and Accomplishments
+- Generated random negative sampling points; used a subsample due to local storage constraints.
+- Successfully trained initial models both with and without OSM features.
+
+### Plans for Next Week
+- Run experiments varying: patch sizes, class balance weights, negative sample strategies (curated vs. random)
+
+### Challenges, Questions, or Notes
+- Initially planned to use all non-mining points as negatives, but this proved infeasible due to storage limitations—unable to download all corresponding image patches locally.
+---
+
+
+## Week of 12 May – 16 May 2025
+
+### Main Activities and Accomplishments
+- Conducted experiments varying patch sizes, class balance weights, and negative sampling strategies (curated vs. random).
+
+### Plans for Next Week
+- Analyze experimental results and assess performance trends across configurations.
+
+### Challenges, Questions, or Notes
+- Initial results were unexpected; upon review, I identified an error in the data splitting strategy.
+- As a result, all experiments had to be rerun to ensure consistency and validity.
+- Was on a short holiday break for part of the week
+---
+
 

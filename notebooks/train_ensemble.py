@@ -5,18 +5,20 @@ import json
 from datetime import date
 import random
 import time
+import geopandas as gpd
 
 import numpy as np
 from sklearn.metrics import (
     classification_report, confusion_matrix,
     roc_auc_score, average_precision_score,
-    precision_recall_curve, roc_curve
+    precision_recall_curve, roc_curve, f1_score
 )
 from sklearn.cluster import DBSCAN
 from tensorflow import keras
 from tensorflow.keras import layers
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
 
 
 def load_patches_from_dir(input_dir):
@@ -33,24 +35,38 @@ def load_patches_from_dir(input_dir):
     return np.array(patches), np.array(labels), patch_files
 
 
-def filter_black(data, mask_limit=0.1):
+def filter_black(data, mask_limit=0.1, return_mask=False):
     masked_fraction = np.array([
         np.sum(np.mean(patch, axis=-1) < 10) / patch.shape[0]**2 for patch in data
     ])
-    return data[masked_fraction < mask_limit]
+    mask = masked_fraction < mask_limit
+    if return_mask:
+        return data[mask], mask
+    return data[mask]
+
+def find_geojson_file(directory, suffix):
+    matches = [f for f in os.listdir(directory) if f.endswith(suffix)]
+    if len(matches) == 0:
+        raise FileNotFoundError(f"No GeoJSON file found ending with '{suffix}' in {directory}")
+    elif len(matches) > 1:
+        raise ValueError(f"Multiple files found ending with '{suffix}' in {directory}: {matches}")
+    return os.path.join(directory, matches[0])
 
 
 def spatial_split(patches, labels, positive_centers, negative_centers, num_s2_bands=12):
     all_centers = np.array(positive_centers + negative_centers)
-    cluster_labels = DBSCAN(eps=0.1, min_samples=2).fit_predict(all_centers)
+    cluster_labels = DBSCAN(eps=3000, min_samples=1).fit_predict(all_centers)
+
+    if np.any(cluster_labels == -1):
+        print(f"⚠️ Warning: {np.sum(cluster_labels == -1)} patches marked as noise and excluded from splitting.")
 
     unique_clusters = np.unique(cluster_labels)
-    random.seed(7)
     random.shuffle(unique_clusters)
 
     n = len(unique_clusters)
     n_train = int(n * 0.7)
     n_val = int(n * 0.15)
+    n_test = n - n_train - n_val
 
     train_clusters = set(unique_clusters[:n_train])
     val_clusters = set(unique_clusters[n_train:n_train + n_val])
@@ -94,28 +110,78 @@ def build_model(input_shape):
         optimizer=keras.optimizers.Adam(3e-4),
         loss=keras.losses.BinaryCrossentropy(),
         metrics=[
-            keras.metrics.BinaryAccuracy(name="acc"),
             keras.metrics.Precision(name="precision"),
             keras.metrics.Recall(name="recall"),
-            keras.metrics.AUC(name="auc")
+            keras.metrics.AUC(name="pr_auc", curve="PR"),
         ]
     )
     return model
 
 
-def main(input_dir, output_dir, resolution):
+def plot_history(history, seed, output_dir, version):
+    metrics = ['loss', 'precision', 'recall', 'auc']
+    for metric in metrics:
+        val_metric = 'val_' + metric
+        if metric in history.history and val_metric in history.history:
+            plt.figure()
+            plt.plot(history.history[metric], label=f'Train {metric}')
+            plt.plot(history.history[val_metric], label=f'Val {metric}')
+            plt.title(f'Training vs. Validation {metric.capitalize()} (Seed {seed})')
+            plt.xlabel('Epoch')
+            plt.ylabel(metric.capitalize())
+            plt.legend()
+            plt.grid(True)
+            plt.tight_layout()
+            filename = os.path.join(output_dir, f"{version}_seed{seed}_{metric}.png")
+            plt.savefig(filename)
+            plt.close()
+
+
+
+
+
+def main(input_dir, output_dir, experiment_name):
     os.makedirs(output_dir, exist_ok=True)
+
+    version = f"{experiment_name}px_{date.today().isoformat()}" 
 
     patches, labels, patch_files = load_patches_from_dir(input_dir)
     pos_patches = patches[labels == 1]
     neg_patches = patches[labels == 0]
-    pos_filtered = filter_black(pos_patches, mask_limit=0.1)
-    neg_filtered = filter_black(neg_patches, mask_limit=0.6)
+    pos_filtered, pos_mask = filter_black(pos_patches, mask_limit=0.1, return_mask=True)
+    neg_filtered, neg_mask = filter_black(neg_patches, mask_limit=0.6, return_mask=True)
 
     x_all = np.concatenate([pos_filtered, neg_filtered])
     y_all = np.concatenate([np.ones(len(pos_filtered)), np.zeros(len(neg_filtered))])
-    pos_centers = [(i, i) for i in range(len(pos_filtered))]
-    neg_centers = [(i, i) for i in range(len(neg_filtered))]
+
+    # Find and load positive and negative sampling GeoJSONs
+    positive_geojson_path = find_geojson_file(input_dir, "_positives.geojson")
+    negative_geojson_path = find_geojson_file(input_dir, "_negatives.geojson")
+
+    pos_gdf = gpd.read_file(positive_geojson_path).to_crs(epsg=3857)
+    neg_gdf = gpd.read_file(negative_geojson_path).to_crs(epsg=3857)
+
+    # Clean invalid or empty geometries
+    pos_gdf = pos_gdf[pos_gdf.geometry.is_valid & ~pos_gdf.geometry.is_empty]
+    neg_gdf = neg_gdf[neg_gdf.geometry.is_valid & ~neg_gdf.geometry.is_empty]
+
+    pos_gdf = pos_gdf[pos_mask].reset_index(drop=True)
+    neg_gdf = neg_gdf[neg_mask].reset_index(drop=True)
+
+    # Validate alignment between .geojson and .pkl patches
+    assert len(pos_filtered) == len(pos_gdf), (
+        f"Mismatch: {len(pos_filtered)} filtered patches vs {len(pos_gdf)} geometries in {positive_geojson_path}"
+    )
+    assert len(neg_filtered) == len(neg_gdf), (
+        f"Mismatch: {len(neg_filtered)} filtered patches vs {len(neg_gdf)} geometries in {negative_geojson_path}"
+    )
+
+    print(f"✅ Positives: kept {len(pos_filtered)} / {len(pos_patches)}")
+    print(f"✅ Negatives: kept {len(neg_filtered)} / {len(neg_patches)}")
+
+    # Extract actual spatial coordinates for DBSCAN
+    pos_centers = [(geom.x, geom.y) for geom in pos_gdf.geometry]
+    neg_centers = [(geom.x, geom.y) for geom in neg_gdf.geometry]
 
     patches, labels, train_idx_base, val_idx_base, test_idx = spatial_split(
         x_all, y_all, pos_centers, neg_centers)
@@ -149,22 +215,31 @@ def main(input_dir, output_dir, resolution):
 
     all_preds = []
     label_counts_per_model = []
-    split_indices_per_model = []
+    best_thresholds = []
     start_time = time.time()
 
     x_test = patches[test_idx]
+    np.save(os.path.join(output_dir, version + '_x_test_patches.npy'), x_test)
+    np.save(os.path.join(output_dir, version + '_y_test.npy'), test_labels)
     for seed in [1, 2, 3, 4, 5]:
         random.seed(seed)
         shuffled = combined_train_val.copy()
-        random.shuffle(shuffled)
-        n_train = int(0.82 * len(shuffled))
-        this_train_idx = shuffled[:n_train]
-        this_val_idx = shuffled[n_train:]
+        this_train_idx, this_val_idx = train_test_split(
+            shuffled, test_size=0.3, stratify=labels[shuffled], random_state=seed
+        )
+
         x_train, y_train = patches[this_train_idx], labels[this_train_idx]
         x_val, y_val = patches[this_val_idx], labels[this_val_idx]
 
+        label_counts_per_model.append({
+            "seed": seed,
+            "train": {"positive": int(np.sum(y_train)), "negative": int(len(y_train) - np.sum(y_train))},
+            "val": {"positive": int(np.sum(y_val)), "negative": int(len(y_val) - np.sum(y_val))}
+        })
+
         keras.utils.set_random_seed(seed)
         model = build_model(input_shape)
+        
         history = model.fit(datagen.flow(x_train, y_train),
                             batch_size=batch_size,
                             epochs=epochs,
@@ -172,23 +247,32 @@ def main(input_dir, output_dir, resolution):
                             shuffle=True,
                             class_weight=class_weight,
                             verbose=1)
+        plot_history(history, seed, output_dir, version)
+        
+        model_save_path = os.path.join(output_dir, f"model_seed{seed}.keras")
+        model.save(model_save_path)
+
+        # Get validation predictions
+        val_preds = model(x_val, training=False).numpy().flatten()
+
+        # Find threshold that maximizes F1
+        precision, recall, thresholds = precision_recall_curve(y_val, val_preds)
+        f1_scores = 2 * (precision * recall) / (precision + recall + 1e-8)
+        best_idx = np.argmax(f1_scores)
+        best_threshold = thresholds[best_idx]
+
+        print(f"Best threshold for seed {seed}: {best_threshold:.4f} (F1 = {f1_scores[best_idx]:.4f})")
+        best_thresholds.append({"seed": seed, "threshold": best_threshold})
+
+        # Get test predictions
         preds = model(x_test, training=False).numpy().flatten()
         all_preds.append(preds)
 
-        label_counts_per_model.append({
-            "seed": seed,
-            "train": {"positive": int(np.sum(y_train)), "negative": int(len(y_train) - np.sum(y_train))},
-            "val": {"positive": int(np.sum(y_val)), "negative": int(len(y_val) - np.sum(y_val))}
-        })
-        split_indices_per_model.append({
-            "seed": seed,
-            "train_idx": this_train_idx,
-            "val_idx": this_val_idx
-        })
+        
 
     training_duration = round(time.time() - start_time, 2)
     ensemble_preds = np.mean(all_preds, axis=0)
-    binary_preds = ensemble_preds > 0.5
+    binary_preds = ensemble_preds > 0.5   # LOOK INTO THIS
 
     report = classification_report(test_labels, binary_preds, output_dict=True)
     conf_matrix = confusion_matrix(test_labels, binary_preds).tolist()
@@ -197,26 +281,20 @@ def main(input_dir, output_dir, resolution):
     fpr, tpr, _ = roc_curve(test_labels, ensemble_preds)
     precision, recall, _ = precision_recall_curve(test_labels, ensemble_preds)
 
-    version = f"{resolution}px_ensemble_{date.today().isoformat()}"
 
     np.save(os.path.join(output_dir, version + '_preds.npy'), ensemble_preds)
-    np.save(os.path.join(output_dir, version + '_y_test.npy'), test_labels)
     np.savez(os.path.join(output_dir, version + '_curves.npz'),
              fpr=fpr, tpr=tpr, precision=precision, recall=recall)
-    with open(os.path.join(output_dir, version + '_last_model_history.pkl'), 'wb') as f:
-        pickle.dump(history.history, f)
     with open(os.path.join(output_dir, version + '_model_config.json'), 'w') as f:
         f.write(model.to_json())
-    with open(os.path.join(output_dir, version + '_split_indices_per_model.json'), 'w') as f:
-        json.dump(split_indices_per_model, f, indent=4)
 
     results = {
         "version": version,
-        "patch_resolution": resolution,
+        "input_shape": input_shape,
         "batch_size": batch_size,
         "epochs": epochs,
         "class_weights": class_weight,
-        "augmentation_parameters": {k: str(v) for k, v in augmentation_parameters.items()},
+        "augmentation_parameters": augmentation_parameters,
         "training_duration": training_duration,
         "label_counts": {
             "test": label_counts_test,
@@ -261,6 +339,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--input_directory', type=str, required=True)
     parser.add_argument('--output_directory', type=str, required=True)
-    parser.add_argument('--resolution', type=int, default=256)
+    parser.add_argument('--experiment_name', type=str, required=True)
     args = parser.parse_args()
-    main(args.input_directory, args.output_directory, args.resolution)
+    main(args.input_directory, args.output_directory, args.experiment_name)

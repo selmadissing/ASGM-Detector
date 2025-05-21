@@ -13,3 +13,6 @@ gee/tmp_boundaries.geojson
 gee/tmp.geojson
 *.qml
 cache/
+models/
+experiment_train_test/
+jobscripts/

@@ -1,24 +1,30 @@
 import os
-import sys
 import argparse
 import pickle
+import json
 from datetime import date
 import random
+import time
+import geopandas as gpd
 
 import numpy as np
-from sklearn.metrics import classification_report
-from sklearn.utils import shuffle
+from sklearn.metrics import (
+    classification_report, confusion_matrix,
+    roc_auc_score, average_precision_score,
+    precision_recall_curve, roc_curve, f1_score
+)
 from sklearn.cluster import DBSCAN
 from tensorflow import keras
 from tensorflow.keras import layers
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
 
-def load_patches_from_dir(input_dir, resolution):
+
+def load_patches_from_dir(input_dir):
     patch_files = [f for f in os.listdir(input_dir) if f.endswith('patch_arrays.pkl')]
     label_files = [f.replace('patch_arrays.pkl', 'patch_array_labels.pkl') for f in patch_files]
-
     patches, labels = [], []
-
     for patch_file, label_file in zip(patch_files, label_files):
         with open(os.path.join(input_dir, patch_file), 'rb') as f:
             patch_data = pickle.load(f)
@@ -26,28 +32,41 @@ def load_patches_from_dir(input_dir, resolution):
         with open(os.path.join(input_dir, label_file), 'rb') as f:
             label_data = pickle.load(f)
             labels = np.concatenate((labels, label_data)) if len(labels) else label_data
+    return np.array(patches), np.array(labels)
 
-    patches = np.array(patches)
-    labels = np.array(labels)
-    return patches, labels, patch_files
 
-def filter_black(data, mask_limit=0.1):
+def filter_black(data, mask_limit=0.1, return_mask=False):
     masked_fraction = np.array([
-        np.sum(np.mean(patch, axis=-1) < 10) / np.size(np.mean(patch, axis=-1)) for patch in data
+        np.sum(np.mean(patch, axis=-1) < 10) / patch.shape[0]**2 for patch in data
     ])
-    return data[masked_fraction < mask_limit]
+    mask = masked_fraction < mask_limit
+    if return_mask:
+        return data[mask], mask
+    return data[mask]
+
+def find_geojson_file(directory, suffix):
+    matches = [f for f in os.listdir(directory) if f.endswith(suffix)]
+    if len(matches) == 0:
+        raise FileNotFoundError(f"No GeoJSON file found ending with '{suffix}' in {directory}")
+    elif len(matches) > 1:
+        raise ValueError(f"Multiple files found ending with '{suffix}' in {directory}: {matches}")
+    return os.path.join(directory, matches[0])
+
 
 def spatial_split(patches, labels, positive_centers, negative_centers, num_s2_bands=12):
     all_centers = np.array(positive_centers + negative_centers)
-    cluster_labels = DBSCAN(eps=0.1, min_samples=2).fit_predict(all_centers)
+    cluster_labels = DBSCAN(eps=3000, min_samples=1).fit_predict(all_centers)
+
+    if np.any(cluster_labels == -1):
+        print(f"⚠️ Warning: {np.sum(cluster_labels == -1)} patches marked as noise and excluded from splitting.")
 
     unique_clusters = np.unique(cluster_labels)
-    random.seed(7)
     random.shuffle(unique_clusters)
 
     n = len(unique_clusters)
     n_train = int(n * 0.7)
-    n_val = int(n * 0.15)
+    n_val = int(n * 0.10)
+    n_test = n - n_train - n_val
 
     train_clusters = set(unique_clusters[:n_train])
     val_clusters = set(unique_clusters[n_train:n_train + n_val])
@@ -57,15 +76,11 @@ def spatial_split(patches, labels, positive_centers, negative_centers, num_s2_ba
     val_indices = [i for i, c in enumerate(cluster_labels) if c in val_clusters]
     test_indices = [i for i, c in enumerate(cluster_labels) if c in test_clusters]
 
-    # Normalize only the Sentinel-2 bands
     patches = patches.astype("float32")
     patches[:, :, :, :num_s2_bands] = np.clip(patches[:, :, :, :num_s2_bands] / 10000, 0, 1)
 
-    x_train, y_train = patches[train_indices], labels[train_indices]
-    x_val, y_val = patches[val_indices], labels[val_indices]
-    x_test, y_test = patches[test_indices], labels[test_indices]
+    return patches, labels, train_indices, val_indices, test_indices
 
-    return x_train, y_train, x_val, y_val, x_test, y_test
 
 def build_model(input_shape):
     model = keras.Sequential([
@@ -94,94 +109,214 @@ def build_model(input_shape):
     model.compile(
         optimizer=keras.optimizers.Adam(3e-4),
         loss=keras.losses.BinaryCrossentropy(),
-        metrics=[keras.metrics.BinaryAccuracy(name="acc"),
-                 keras.metrics.Precision(name="precision"),
-                 keras.metrics.Recall(name="recall"),
-                 keras.metrics.AUC(name="auc")]
+        metrics=[
+            keras.metrics.Precision(name="precision"),
+            keras.metrics.Recall(name="recall"),
+            keras.metrics.AUC(name="pr_auc", curve="PR"),
+        ]
     )
     return model
 
-def main(input_dir, output_dir, resolution):
-    keras.utils.set_random_seed(42)
 
-    # Load patches
-    patches, labels, patch_files = load_patches_from_dir(input_dir, resolution)
-    positive_patches = patches[labels == 1]
-    negative_patches = patches[labels == 0]
+def plot_history(history, output_dir):
+    metrics = ['loss', 'precision', 'recall', 'auc']
+    for metric in metrics:
+        val_metric = 'val_' + metric
+        if metric in history.history and val_metric in history.history:
+            plt.figure()
+            plt.plot(history.history[metric], label=f'Train {metric}')
+            plt.plot(history.history[val_metric], label=f'Val {metric}')
+            plt.title(f'Training vs. Validation {metric.capitalize()}')
+            plt.xlabel('Epoch')
+            plt.ylabel(metric.capitalize())
+            plt.legend()
+            plt.grid(True)
+            plt.tight_layout()
+            filename = os.path.join(output_dir, f"{metric}.png")
+            plt.savefig(filename)
+            plt.close()
 
-    filtered_positives = filter_black(positive_patches, mask_limit=0.1)
-    filtered_negatives = filter_black(negative_patches, mask_limit=0.6)
 
 
-    
 
-    # Fake centers for spatial split (replace with real tile centers if available)
-    positive_centers = [(i, i) for i in range(len(filtered_positives))]
-    negative_centers = [(i, i) for i in range(len(filtered_negatives))]
 
-    x_train, y_train, x_val, y_val, x_test, y_test = spatial_split(
-        np.concatenate([filtered_positives, filtered_negatives]), 
-        np.concatenate([np.ones(len(filtered_positives)), np.zeros(len(filtered_negatives))]),
-        positive_centers, negative_centers
-    )
-    
-    np.savez(os.path.join(output_dir, "split_indices.npz"), train_idx=train_indices, val_idx=val_indices, test_idx=test_indices)
+def main(input_dir, output_dir, experiment_name):
 
-    input_shape = x_train.shape[1:]
-    model = build_model(input_shape)
+    SEED = 7
+    random.seed(SEED)
+    np.random.seed(SEED)
 
-    augmentation_parameters = {
-    'featurewise_center': False,
-    'rotation_range': 360,
-    'width_shift_range': [0.9, 1.1],
-    'height_shift_range': [0.9, 1.1],
-    'shear_range': 10,
-    'zoom_range': [0.9, 1.1],
-    'vertical_flip': True,
-    'horizontal_flip': True,
-    # Fill options: "constant", "nearest", "reflect" or "wrap"
-    'fill_mode': 'reflect'}
-    
-    datagen = ImageDataGenerator(**augmentation_parameters)
+    os.makedirs(output_dir, exist_ok=True)
+    version = f"{experiment_name}_{date.today().isoformat()}"
 
-    batch_size = 32
+    patches, labels = load_patches_from_dir(input_dir)
+    pos_patches = patches[labels == 1]
+    neg_patches = patches[labels == 0]
+    pos_filtered, pos_mask = filter_black(pos_patches, mask_limit=0.1, return_mask=True)
+    neg_filtered, neg_mask = filter_black(neg_patches, mask_limit=0.6, return_mask=True)
+
+    x_all = np.concatenate([pos_filtered, neg_filtered])
+    y_all = np.concatenate([np.ones(len(pos_filtered)), np.zeros(len(neg_filtered))])
+
+    positive_geojson_path = find_geojson_file(input_dir, "_positives.geojson")
+    negative_geojson_path = find_geojson_file(input_dir, "_negatives.geojson")
+
+    pos_gdf = gpd.read_file(positive_geojson_path).to_crs(epsg=3857)
+    neg_gdf = gpd.read_file(negative_geojson_path).to_crs(epsg=3857)
+
+    pos_gdf = pos_gdf[pos_gdf.geometry.is_valid & ~pos_gdf.geometry.is_empty]
+    neg_gdf = neg_gdf[neg_gdf.geometry.is_valid & ~neg_gdf.geometry.is_empty]
+    pos_gdf = pos_gdf[pos_mask].reset_index(drop=True)
+    neg_gdf = neg_gdf[neg_mask].reset_index(drop=True)
+
+    assert len(pos_filtered) == len(pos_gdf)
+    assert len(neg_filtered) == len(neg_gdf)
+
+    print(f"✅ Positives: kept {len(pos_filtered)} / {len(pos_patches)}")
+    print(f"✅ Negatives: kept {len(neg_filtered)} / {len(neg_patches)}")
+
+    pos_centers = [(geom.x, geom.y) for geom in pos_gdf.geometry]
+    neg_centers = [(geom.x, geom.y) for geom in neg_gdf.geometry]
+
+    patches, labels, train_idx_base, val_idx_base, test_idx = spatial_split(
+        x_all, y_all, pos_centers, neg_centers)
+
+    combined_train_val = train_idx_base + val_idx_base
+    test_labels = labels[test_idx]
+    label_counts_test = {
+        "positive": int(np.sum(test_labels)),
+        "negative": int(len(test_labels) - np.sum(test_labels))
+    }
+
+    input_shape = patches.shape[1:]
+    batch_size = 16
     epochs = 160
     class_weight = {0: 1, 1: 1}
 
+    datagen = ImageDataGenerator(
+        featurewise_center=False,
+        rotation_range=360,
+        width_shift_range=[0.9, 1.1],
+        height_shift_range=[0.9, 1.1],
+        shear_range=10,
+        zoom_range=[0.9, 1.1],
+        vertical_flip=True,
+        horizontal_flip=True,
+        fill_mode='reflect'
+    )
+
+    start_time = time.time()
+
+    np.save(os.path.join(output_dir, 'x_test_patches.npy'), patches[test_idx])
+    np.save(os.path.join(output_dir, 'y_test.npy'), test_labels)
+
+    shuffled = combined_train_val.copy()
+    this_train_idx, this_val_idx = train_test_split(
+        shuffled, test_size=0.3, stratify=labels[shuffled], random_state=SEED)
+
+    x_train, y_train = patches[this_train_idx], labels[this_train_idx]
+    x_val, y_val = patches[this_val_idx], labels[this_val_idx]
+
+    train_counts = {
+        "positive": int(np.sum(y_train)),
+        "negative": int(len(y_train) - np.sum(y_train))}
+    val_counts = {
+        "positive": int(np.sum(y_val)),
+        "negative": int(len(y_val) - np.sum(y_val))}
+
+    keras.utils.set_random_seed(SEED)
+    model = build_model(input_shape)
+
     history = model.fit(datagen.flow(x_train, y_train),
-                        batch_size=batch_size, epochs=epochs,
+                        batch_size=batch_size,
+                        epochs=epochs,
                         validation_data=(x_val, y_val),
                         shuffle=True,
-                        class_weight=class_weight)
+                        class_weight=class_weight,
+                        verbose=1)
 
-    # Evaluation
-    threshold = 0.8
-    preds = model.predict(x_test)
-    report = classification_report(y_test, preds > threshold, target_names=['No Mine', 'Mine'])
+    plot_history(history, output_dir)
+    model.save(os.path.join(output_dir, 'model.keras'))
 
-    # Save
-    version = f"{resolution}px_{date.today().isoformat()}"
-    os.makedirs(output_dir, exist_ok=True)
+    val_preds = model(x_val, training=False).numpy().flatten()
+    precision, recall, thresholds = precision_recall_curve(y_val, val_preds)
+    f1_scores = 2 * (precision * recall) / (precision + recall + 1e-8)
+    best_idx = np.argmax(f1_scores)
+    best_threshold = thresholds[best_idx]
+    print(f"Best threshold based on validation set: {best_threshold:.4f} (F1 = {f1_scores[best_idx]:.4f})")
 
-    model.save(os.path.join(output_dir, version + '.h5'))
+    preds_test = model(patches[test_idx], training=False).numpy().flatten()
+    binary_preds = preds_test > best_threshold
 
-    with open(os.path.join(output_dir, version + '_config.txt'), 'w') as f:
-        f.write(f"Model version: {version}\n\n")
-        f.write('Input Data:\n')
-        [f.write('\t' + file + '\n') for file in patch_files]
-        f.write('\n\nAugmentation Parameters:\n')
-        for k, v in zip(augmentation_parameters.keys(), augmentation_parameters.values()):
-                f.write(f"\t{k}: {v}\n")
-        f.write(f"\nBatch Size: {batch_size}")
-        f.write(f"\nTraining Epochs: {epochs}")
-        f.write(f"\nClass Weights: {class_weight}")
-        f.write(f'\n\nClassification Report at {threshold}\n')
-        f.write(report)
+    auc_roc = roc_auc_score(test_labels, preds_test)
+    auc_pr = average_precision_score(test_labels, preds_test)
+    fpr, tpr, _ = roc_curve(test_labels, preds_test)
+    test_precision, test_recall, _ = precision_recall_curve(test_labels, preds_test)
+    report = classification_report(test_labels, binary_preds, output_dict=True)
+    conf_matrix = confusion_matrix(test_labels, binary_preds).tolist()
+
+    training_duration = round(time.time() - start_time, 2)
+
+    np.save(os.path.join(output_dir, 'preds.npy'), preds_test)
+    np.savez(os.path.join(output_dir, 'curves.npz'),
+             fpr=fpr, tpr=tpr, precision=test_precision, recall=test_recall)
+    with open(os.path.join(output_dir, 'model_config.json'), 'w') as f:
+        f.write(model.to_json())
+
+    results = {
+        "version": version,
+        "input_shape": input_shape,
+        "batch_size": batch_size,
+        "epochs": epochs,
+        "class_weights": class_weight,
+        "augmentation_parameters": datagen.__dict__,
+        "training_duration": training_duration,
+        "label_counts": {
+            "test": label_counts_test,
+            "train_val": {"train": train_counts, "val": val_counts}
+        },
+        "best_threshold": best_threshold,
+        "best_f1_score": f1_scores[best_idx],
+        "metrics": {
+            "roc_auc": auc_roc,
+            "pr_auc": auc_pr,
+            "f1_score": f1_score(test_labels, binary_preds),
+            "classification_report": report,
+            "confusion_matrix": conf_matrix
+        }
+    }
+
+    with open(os.path.join(output_dir, 'metrics.json'), 'w') as f:
+        json.dump(results, f, indent=4)
+
+    plt.figure()
+    plt.plot(fpr, tpr, label=f'ROC Curve (AUC = {auc_roc:.2f})')
+    plt.plot([0, 1], [0, 1], linestyle='--', color='gray')
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('Receiver Operating Characteristic (ROC)')
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, 'roc_curve.png'))
+    plt.close()
+
+    plt.figure()
+    plt.plot(recall, precision, label=f'PR Curve (AUC = {auc_pr:.2f})')
+    plt.xlabel('Recall')
+    plt.ylabel('Precision')
+    plt.title('Precision-Recall (PR) Curve')
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, 'pr_curve.png'))
+    plt.close()
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--input_directory', type=str, required=True, help="Folder with 4 .pkl files")
-    parser.add_argument('--output_directory', type=str, required=True, help="Folder to save model + config")
-    parser.add_argument('--resolution', type=int, default=256, help="Patch resolution")
+    parser.add_argument('--input_directory', type=str, required=True)
+    parser.add_argument('--output_directory', type=str, required=True)
+    parser.add_argument('--experiment_name', type=str, required=True)
     args = parser.parse_args()
-    main(args.input_directory, args.output_directory, args.resolution)
+    main(args.input_directory, args.output_directory, args.experiment_name)
