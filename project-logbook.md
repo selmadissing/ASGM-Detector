@@ -121,3 +121,76 @@ The goal is to stay organized, reflect regularly, and make it easier to share up
 ---
 
 
+## Week of 19 May – 23 May 2025
+
+### Main Activities and Accomplishments
+- Reran all model experiments after fixing the data splitting error.
+- Evaluated models with optimized classification thresholds (based on F1 score).
+- Investigated sources of false negatives and false positives.
+- Ablation study.
+
+### Plans for Next Week
+- Start writing the Results and Discussion section.
+- Begin interpretability analysis using Grad-CAM and occlusion sensitivity.
+
+### Challenges, Questions, or Notes
+- Submitted short version to conference!
+---
+
+
+## Week of 26 May – 30 May 2025
+
+### Main Activities and Accomplishments
+- Interpretability study with Grad-CAM.
+- Finish results and discussion sections.
+- Submitted first draft.
+
+### Plans for Next Week
+- Implement feedback from first draft.
+
+### Challenges, Questions, or Notes
+- Challenging to stay under the page limit, need to move plots to Appendix.
+---
+
+
+## Week of 2 June – 6 June 2025
+
+### Main Activities and Accomplishments
+- Implemented feedback.
+- Added confidence intervals which meant I had to update results and discussion.
+
+### Plans for Next Week
+- Submit second draft to supervisor.
+
+### Challenges, Questions, or Notes
+- Results changed quite a bit after adding the confidence intervals.
+---
+
+
+## Week of 9 June – 13 June 2025
+
+**Vacation**
+---
+
+
+## Week of 16 June – 20 June 2025
+
+### Main Activities and Accomplishments
+- Submitted second draft to supervisor.
+- Finalised pipeline diagram.
+
+### Plans for Next Week
+- Incorporate feedback and revise Discussion and Conclusion.
+
+### Challenges, Questions, or Notes
+- Difficult to stay under the page limit.
+---
+
+
+## Week of 23 June – 27 June 2025
+
+### Main Activities and Accomplishments
+- Final touches.
+- Cleaned up and documented GitHub repo.
+- Submit thesis.
+---

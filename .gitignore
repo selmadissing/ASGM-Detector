@@ -15,4 +15,5 @@ gee/tmp.geojson
 cache/
 models/
 experiment_train_test/
-jobscripts/
+snellius_jobscripts/
+data/contextual/

@@ -1,55 +1,94 @@
-# Artisanal Small-Scale Gold Mining Detection in the Amazon (Thesis Project)
-## Master Thesis Information Studies 2024 - 2025
+<h1 align="center">Artisanal Small-Scale Gold Mining Detection in the Amazon</h1>
+<h3 align="center">Master Thesis – Information Studies 2024–2025</h3>
 
-This repository contains the code and analysis for my Master's thesis focused on detecting illegal artisanal gold mining in the Bolívar region of the Amazon Forest using satellite imagery and contextual geographic data. The goal is to train a model that can identify mining activity from Sentinel-2 patches, enriched with information from OpenStreetMap (OSM).
+<p align="center">
+  Detecting gold mining activity in the Bolívar region of the Amazon using Sentinel-2 satellite imagery and OpenStreetMap data.
+</p>
+
+<p align="center">
+  <img src="pipeline.png" alt="Pipeline Overview" width="800"/>
+</p>
 
 ---
 
-<!-- ## What This Project Does
+## Overview
 
-- Generates training data by extracting 48×48 Sentinel-2 image patches from known GPS-labeled sites (positive = mining, negative = non-mining).
-- Combines visual data with contextual information from OSM (e.g., roads, rivers, land use).
-- Trains a classifier to distinguish between mining and non-mining regions using remote sensing and geographic context.
+This repository contains the code and analysis for my Master's thesis project focused on detecting artisanal and small-scale gold mining (ASGM) in the southeastern Venezuelan Amazon.
 
---- -->
+The project trains a deep learning model that analyzes Sentinel-2 image patches, enriched with contextual features from OpenStreetMap (OSM), to detect signs of mining activity in rainforest regions.
+
+---
 
 ## Built On Top Of
 
-This work builds upon the [Earthrise Media Mining Detector](https://github.com/earthrise-media/mining-detector), an open-source project designed to automate the detection of mining scars in Amazonian satellite imagery. Their codebase laid the groundwork for patch generation, Sentinel-2 preprocessing, and basic model structure and training.
-
-For my thesis, I adapted parts of their pipeline to include OSM features.
+This work builds upon the excellent [Earthrise Media Mining Detector](https://github.com/earthrise-media/mining-detector), an open-source pipeline for detecting mining scars in the Amazon.
 
 ---
 
-<!-- ## Why This Matters
-
-Artisanal mining leaves visible scars in the rainforest—muddy flats, wastewater pools, deforestation—that can be picked up in satellite imagery. However, these patterns are subtle and require careful analysis to distinguish from natural variation. By combining raw imagery with human-generated map data, we hope to improve the model’s ability to generalize and support environmental monitoring efforts.
-
---- -->
-
-<!-- ## Project Structure
+## Repository Structure
+```
 data/
-├── boundaries/               # Area-of-interest GeoJSONs
-├── sampling_locations/       # GPS-labeled mine/non-mine locations
-├── contextual/               # OSM data extracted for the region
-├── training_data/            # Extracted 48×48 image patches and labels
+├── boundaries/               # Study region boundaries (GeoJSON)
+├── sampling_locations/       # Mining / non-mining GPS points
+├── tiles/                    # Sentinel-2 tile geometries (used for sampling logic)
+├── contextual/               # OSM features
+├── training_data/            # Generated Sentinel-2 (+ OSM) patches
 
 gee/
-├── get_training_data.py      # Patch creation logic (adapted from Earthrise)
-├── gee.py                    # Google Earth Engine data extraction
+├── get_training_data.py                     # Patch generation logic
+├── gee.py                                   # Google Earth Engine wrapper
+├── gee_pipeline.py                          # Full data processing pipeline
+├── utils.py                                 # Utility functions
+├── get_training_data.ipynb                  # Notebook for core patch generation
+├── get_training_data_48px.ipynb             # Variant for 48×48 patches
+├── get_training_data_random_negatives.ipynb # For generating random negatives
 
-notebooks/
-├── Exploratory Data Analysis.ipynb  # Full EDA of the dataset
+train_model/
+├── train_model.py                           # Main model training script
+├── train_model_class_imbalance.py           # Variant with class weighting
 
---- -->
+scripts/                                      # Helper scripts for preprocessing & utils
 
+OSM_data.ipynb                                # OSM patch extraction and EDA
+results_analysis.ipynb                        # Evaluation, plots, interpretability
+project-logbook.md                            # Weekly updates and milestones
+```
+
+> ⚠️ Note: Some folders (like `data/training_data/` and `data/contextual/`) are not tracked in Git because they contain large generated files. You'll need to run the patch generation script and OSM_data.ipynb to populate them.
+
+---
+
+## How to use
+1. **Extract OSM Features**  
+   Run `notebooks/OSM_data.ipynb` to download and rasterize OpenStreetMap features.  
+   ➜ Output is saved to: `data/contextual/`
+
+2. **Generate Training Patches**  
+   Use one of the patch generation notebooks:  
+   - `gee/get_training_data.ipynb` (standard)
+   - `gee/get_training_data_48px.ipynb` (for smaller patches)
+   - `gee/get_training_data_random_negatives.ipynb` (for random negative sampling)  
+   ➜ Output is saved to: `data/training_data/`
+
+3. **Train the Model**  
+   Choose a script from the `train_model/` folder to train your classifier:  
+   - `train_model.py` for the base model  
+   - `train_model_class_imbalance.py` if you're addressing class imbalance  
+
+    Example:  
+   ```bash
+   python train_model.py --input_directory ... --output_directory ... --experiment_name ...
+   ```
 
 ## License
 
-Parts of this project build on the original Earthrise code, which is released under the [MIT License](https://github.com/earthrise-media/mining-detector/blob/main/LICENSE). 
+This project reuses components from Earth Genome’s codebase, licensed under the [MIT License](https://github.com/earthrise-media/mining-detector/blob/main/LICENSE).
 
 ---
 
 ## Acknowledgements
 
-Thanks to the Earthrise team for making their mining detector pipeline open-source.
+Big thanks to the Earth Genome and Earthrise Media teams for providing the foundation for this work.  
+Also grateful to my thesis supervisor for their guidance and feedback throughout the project.
+
+---
