@@ -64,7 +64,7 @@ project-logbook.md                            # Weekly updates and milestones
    ➜ Output is saved to: `data/contextual/`
 
 2. **Generate Training Patches**  
-   Use one of the patch generation notebooks:  
+   Use one of the patch generation notebooks (see the gee/README.md for details):
    - `gee/get_training_data.ipynb` (standard)
    - `gee/get_training_data_48px.ipynb` (for smaller patches)
    - `gee/get_training_data_random_negatives.ipynb` (for random negative sampling)  

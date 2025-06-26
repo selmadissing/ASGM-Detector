@@ -44,7 +44,7 @@ class GEE_Data_Extractor:
         self.bandIds = BAND_IDS.get(collection)
 
         ee.Authenticate()
-        ee.Initialize(project='mining-thesis-selma')
+        ee.Initialize(project='mining-thesis-selma') # SHOULD BE CHANGED TO YOUR PROJECT
 
         if collection == 'S2':
             s2 = ee.ImageCollection("COPERNICUS/S2_HARMONIZED")
